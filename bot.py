@@ -2,36 +2,52 @@ import os
 import logging
 import asyncio
 import requests
+from threading import Thread
+from flask import Flask
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-# Logging setup
+# 1. Logging setup
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# All 5 Environment Variables
+# 2. Render Port Binding Fix (Dummy Web Server)
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "PrimeMovie Bot is alive and running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+# 3. Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY") 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CX = os.getenv("GOOGLE_CX")
-TMDB_API_KEY = os.getenv("TMDB_API_KEY") or "YOUR_TMDB_API_KEY" # TMDB की यहाँ भी डाल सकते हैं या Render पर
+TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 # MongoDB Setup
 try:
-    client = MongoClient(MONGO_URI)
-    db = client['primemovie_db']
-    movies_collection = db['movies']
-    logger.info("MongoDB Connected Successfully!")
+    if MONGO_URI:
+        client = MongoClient(MONGO_URI)
+        db = client['primemovie_db']
+        movies_collection = db['movies']
+        logger.info("MongoDB Connected Successfully!")
+    else:
+        movies_collection = None
+        logger.warning("MONGO_URI check bypassed.")
 except Exception as e:
     logger.error(f"MongoDB Connection Error: {e}")
     movies_collection = None
 
-# 📢 अपने टेलीग्राम चैनल का यूजरनेम यहाँ सेट करें
-CHANNEL_USERNAME = "@YOUR_CHANNEL_USERNAME" 
+# 📢 Telegram Channel Username
+CHANNEL_USERNAME = "@Princeprm_bot" 
 
-# भाषा कोड को नाम में बदलने की डिक्शनरी
 LANG_MAP = {
     "hi": "Hindi 🇮🇳",
     "en": "English 🇺🇸",
@@ -42,7 +58,7 @@ LANG_MAP = {
     "bn": "Bengali 🇮🇳"
 }
 
-# ऑटो-डिलीट फंक्शन (30 मिनट)
+# 30 minute auto-delete
 async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 1800):
     await asyncio.sleep(delay)
     try:
@@ -50,9 +66,9 @@ async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id
     except Exception as e:
         logger.error(f"Auto-delete failed: {e}")
 
-# चैनल सब्सक्रिप्शन चेक
+# Channel subscription check
 async def is_user_subscribed(bot, user_id: int) -> bool:
-    if not CHANNEL_USERNAME:
+    if not CHANNEL_USERNAME or CHANNEL_USERNAME == "@YOUR_CHANNEL_USERNAME":
         return True
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
@@ -66,18 +82,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"Hey 👋 {user_name} 🍿\n\n"
         f"🍿 **Welcome To PrimeMovie Multi-Language Bot!**\n\n"
-        f"यहाँ आप किसी भी भाषा (**Hindi, English, Telugu, Tamil**) में Movies ढूंढ सकते हैं!\n"
-        f"बस मूवी का नाम लिखकर भेजें।"
+        f"यहाँ आप किसी भी भाषा में Movies ढूंढ सकते हैं और YouTube वीडियो भी डाउनलोड कर सकते हैं!\n"
+        f"बस नाम लिखकर भेजें या लिंक पेस्ट करें।"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# मुख्य मैसेज हैंडलर
+# Main message handler
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
     if not await is_user_subscribed(context.bot, user_id):
-        invite_link = f"https://t.me{CHANNEL_USERNAME.replace('@', '')}"
+        invite_link = f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}"
         keyboard = [[InlineKeyboardButton("📢 Join Channel", url=invite_link)]]
         await update.message.reply_text(
             f"❌ **Access Denied!**\n\nबोट का उपयोग करने के लिए आपको हमारे चैनल में शामिल होना होगा।",
@@ -87,7 +103,6 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
         return
 
     if "youtube.com" in text or "youtu.be" in text:
-        # यूट्यूब डायरेक्ट डाउनलोडर (पुरानी सेटिंग)
         status_msg = await update.message.reply_text("⚡ *Processing YouTube link...*", parse_mode="Markdown")
         try:
             res = requests.post("https://cobalt.tools", json={"url": text, "vQuality": "720"}).json()
@@ -96,20 +111,19 @@ async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT
                 await update.message.reply_text("🎬 **Ready!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", url=res.get("url"))]]))
             else:
                 await status_msg.edit_text("❌ Link fetch failed.")
-        except:
+        except Exception:
             await status_msg.edit_text("⚠️ API Error.")
     else:
-        # 🆕 मूवी का नाम आने पर पहले TMDB से सर्च करके भाषा का विकल्प दिखाएंगे
         await search_tmdb_and_show_languages(update, context, text)
 
-# TMDB से सर्च करके भाषा चुनने का प्लेटफॉर्म दिखाना
+# TMDB search
 async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     if not TMDB_API_KEY:
         await update.message.reply_text("Error: TMDB API Key is missing.")
         return
 
     status_msg = await update.message.reply_text("🔍 *Searching title details...*", parse_mode="Markdown")
-    url = f"https://themoviedb.org{TMDB_API_KEY}&query={requests.utils.quote(query)}"
+    url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
     try:
         response = requests.get(url).json()
@@ -120,12 +134,11 @@ async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.D
             await status_msg.edit_text(f"❌ '{query}' नाम की कोई मूवी नहीं मिली।")
             return
         
-        item = filtered[0] # सबसे सटीक पहला रिज़ल्ट लेंगे
+        item = filtered[0]
         title = item.get("title") or item.get("name")
         orig_lang = item.get("original_language", "en")
         date = (item.get("release_date") or item.get("first_air_date") or "N/A")[:4]
         
-        # भाषाओं के बटन तैयार करना (यूजर को एक ही प्लेटफॉर्म पर सब दिखेगा)
         keyboard = [
             [
                 InlineKeyboardButton("Hindi 🇮🇳", callback_data=f"lang_hi_{title}_{date}"),
@@ -143,9 +156,7 @@ async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.D
         detected_lang = LANG_MAP.get(orig_lang, orig_lang.upper())
         await status_msg.delete()
         await update.message.reply_text(
-            text=f"🎬 **Found:** `{title} ({date})`\n"
-                 f"🗣️ **Original Language:** {detected_lang}\n\n"
-                 f"👇 **कृपया अपनी पसंदीदा भाषा चुनें जिसमें आप डाउनलोड करना चाहते हैं:**",
+            text=f"🎬 **Found:** `{title} ({date})`\n🗣️ **Original Language:** {detected_lang}\n\n👇 **अपनी पसंदीदा भाषा चुनें:**",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -153,7 +164,7 @@ async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.D
         logger.error(f"TMDB Search error: {e}")
         await status_msg.edit_text("⚠️ Details fetch error.")
 
-# बटन क्लिक हैंडलर (भाषा चुनने के बाद का प्रोसेस)
+# Button click handler
 async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -164,17 +175,17 @@ async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         title = data[2]
         date = data[3]
         
-        # सर्च क्वेरी को चुनी हुई भाषा के हिसाब से कस्टमाइज़ करें
         lang_suffix = "" if selected_lang == "all" else f"{selected_lang} dubbed"
         search_query = f"{title} {date} {lang_suffix}".strip()
         
         await query.message.edit_text(f"⏳ **Searching links for ({selected_lang.upper()})...**")
         await execute_mega_search(query.message, context, search_query, title)
 
-# सर्च आर्किटेक्चर (डेटाबेस ➡️ गूगल ➡️ यूट्यूब) चुनी हुई भाषा के साथ
+# Search Architecture: MongoDB -> Google Custom Search -> YouTube Backup
 async def execute_mega_search(message, context, search_query, display_title):
-    # 1. MongoDB चेक करें
     movie_data = None
+    
+    # स्टेप 1: MongoDB डेटाबेस चेक करें
     if movies_collection is not None:
         movie_data = movies_collection.find_one({"title": {"$regex": display_title, "$options": "i"}})
     
@@ -184,7 +195,7 @@ async def execute_mega_search(message, context, search_query, display_title):
             [InlineKeyboardButton("📥 720p Direct Download", url=movie_data.get("link_720", "#"))]
         ]
         dl_msg = await message.reply_text(
-            text=f"🚀 **{display_title}**\nडेटाबेस में डायरेक्ट लिंक्स मिल गए हैं!\n\n⚠️ 30 मिनट में डिलीट हो जाएगा।",
+            text=f"🚀 **{display_title}**\nडेटाबेस में डायरेक्ट लिंक्स मिल गए हैं!\n\n⚠️ यह मैसेज 30 मिनट में डिलीट हो जाएगा।",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -192,16 +203,20 @@ async def execute_mega_search(message, context, search_query, display_title):
         await message.delete()
         return
 
-    # 2. Google Custom Search (अगर DB में विशिष्ट भाषा न हो)
+    # स्टेप 2: गूगल कस्टम सर्च (अगर DB में न मिले)
     if GOOGLE_API_KEY and GOOGLE_CX:
-        g_url = f"https://googleapis.com{GOOGLE_API_KEY}&cx={GOOGLE_CX}&q={requests.utils.quote(search_query + ' download link')}"
         try:
-            res = requests.get(g_url).json()
-            items = res.get("items", [])
+            google_url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx={GOOGLE_CX}&q={requests.utils.quote(search_query)}"
+            g_res = requests.get(google_url).json()
+            items = g_res.get("items", [])
             if items:
-                keyboard = [[InlineKeyboardButton(f"🔗 {item['title'][:35]}...", url=item['link'])] for item in items[:4]]
+                keyboard = []
+                for item in items[:3]: # टॉप 3 रिजल्ट्स
+                    title_text = item.get("title", "Link")[:30] + "..."
+                    keyboard.append([InlineKeyboardButton(title_text, url=item.get("link"))])
+                
                 dl_msg = await message.reply_text(
-                    text=f"🌐 **Google Links for:** _{search_query}_\n\n👇 डाउनलोड करने के लिए नीचे क्लिक करें:",
+                    text=f"🌐 **Web Results for {display_title}:**\nगूगल पर कुछ लिंक्स मिले हैं:\n\n⚠️ 30 मिनट में डिलीट हो जाएगा।",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="Markdown"
                 )
@@ -209,17 +224,56 @@ async def execute_mega_search(message, context, search_query, display_title):
                 await message.delete()
                 return
         except Exception as e:
-            logger.error(f"Google error: {e}")
+            logger.error(f"Google Search error: {e}")
 
-    # 3. YouTube API (अंतिम बैकअप)
+    # स्टेप 3: यूट्यूब बैकअप सर्च
     if YOUTUBE_API_KEY:
-        yt_url = f"https://googleapis.com{requests.utils.quote(search_query)}&type=video&key={YOUTUBE_API_KEY}"
         try:
-            res = requests.get(yt_url).json()
-            items = res.get("items", [])
-            if items:
+            yt_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={requests.utils.quote(search_query)}&type=video&key={YOUTUBE_API_KEY}"
+            yt_res = requests.get(yt_url).json()
+            videos = yt_res.get("items", [])
+            if videos:
                 keyboard = []
-                for item in items:
-                    v_id = item.get("id", {}).get("videoId")
-                    v_title = item.get("snippet", {}).get("title", "")
-                    if v_id:
+                for vid in videos[:3]:
+                    video_id = vid.get("id", {}).get("videoId")
+                    video_title = vid.get("snippet", {}).get("title", "Video")[:30] + "..."
+                    if video_id:
+                        keyboard.append([InlineKeyboardButton(f"▶️ {video_title}", url=f"https://youtube.com/watch?v={video_id}")])
+                
+                if keyboard:
+                    dl_msg = await message.reply_text(
+                        text=f"📺 **YouTube Results for {display_title}:**\n\n⚠️ 30 मिनट में डिलीट हो जाएगा।",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown"
+                    )
+                    asyncio.create_task(delete_message_after_delay(context, message.chat_id, dl_msg.message_id, 1800))
+                    await message.delete()
+                    return
+        except Exception as e:
+            logger.error(f"YouTube Search error: {e}")
+
+    await message.edit_text(f"❌ माफ कीजिए, '{display_title}' के लिए कोई लिंक्स नहीं मिले।")
+
+def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("Telegram Token is missing!")
+        return
+
+    # Flask background server start for Render
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    logger.info("Flask Web Server Started in Background Thread.")
+
+    # Telegram Bot Application
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, incoming_message_handler))
+    app.add_handler(CallbackQueryHandler(button_click_handler))
+    
+    print("PrimeMovie Web Service & Telegram Bot is running successfully...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
