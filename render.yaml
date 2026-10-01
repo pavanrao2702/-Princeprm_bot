@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ultimate-entertainment-bot
+    env: python
+    region: ohio
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: OMDB_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+        
