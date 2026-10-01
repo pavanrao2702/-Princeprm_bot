@@ -1,146 +1,127 @@
 import os
+import logging
 import requests
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-# Environment variables fetch karna
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# Logging setup
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Environment variables
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-OMDB_API_KEY = os.getenv("OMDB_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")  # Jo key aapne add ki hai
 
-# Professional Start Command Handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name or "User"
-    welcome_text = (
+    user_name = update.effective_user.first_name
+    welcome_message = (
         f"Hey 👋 {user_name} 🍿\n\n"
-        "🍿 **Welcome To PrimeMovie Bot!**\n\n"
-        "Here You Can Request Movie's, Just Send Movie OR WebSeries Name With Proper Spelling..!!"
+        f"🍿 **Welcome To PrimeMovie Bot!**\n\n"
+        f"Here You Can Request Movie's, Just Send Movie OR WebSeries Name With Proper Spelling..!!"
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
+    await update.message.reply_text(welcome_message, parse_mode="Markdown")
 
-# YouTube Trailer Link Fetching
-def get_youtube_trailer(query):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🤖 **How to use PrimeMovie Bot:**\n\n"
+        "1. Just type the name of any Movie or Web Series.\n"
+        "2. Bot will search TMDB and fetch YouTube Trailer automatically.\n"
+        "3. Click on the quality buttons to get your files!"
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+# YouTube se trailer link nikalne ka function
+def get_youtube_trailer(movie_title):
     if not YOUTUBE_API_KEY:
         return None
-    url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={requests.utils.quote(query + ' official trailer')}&key={YOUTUBE_API_KEY}&type=video&maxResults=1"
+    
+    search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={requests.utils.quote(movie_title + ' official trailer')}&key={YOUTUBE_API_KEY}&type=video&maxResults=1"
     try:
-        res = requests.get(url, timeout=5).json()
+        res = requests.get(search_url).json()
         items = res.get("items", [])
         if items:
             video_id = items[0]["id"]["videoId"]
             return f"https://www.youtube.com/watch?v={video_id}"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"YouTube API Error: {e}")
     return None
 
-# OMDb Details Fetching
-def get_omdb_details(title):
-    if not OMDB_API_KEY:
-        return "N/A", "N/A"
-    url = f"https://www.omdbapi.com/?t={requests.utils.quote(title)}&apikey={OMDB_API_KEY}"
-    try:
-        res = requests.get(url, timeout=5).json()
-        if res.get("Response") == "True":
-            imdb_rating = res.get("imdbRating", "N/A")
-            box_office = res.get("BoxOffice", "N/A")
-            return imdb_rating, box_office
-    except Exception:
-        pass
-    return "N/A", "N/A"
-
-# Combined Search Handler for Movies, Series, and Anime
-async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-        
+async def search_movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     
     if not TMDB_API_KEY:
         await update.message.reply_text("Error: TMDB API Key is not configured on the server.")
         return
 
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
-    # 1. Jikan API (Anime Search)
-    anime_url = f"https://api.jikan.moe/v4/anime?q={requests.utils.quote(query)}&limit=1"
-    try:
-        anime_res = requests.get(anime_url, timeout=6).json().get("data", [])
-        if anime_res and len(anime_res) > 0:
-            anime = anime_res[0]
-            title = anime.get("title", "N/A")
-            score = anime.get("score", "N/A")
-            synopsis = anime.get("synopsis") or "No description available."
-            episodes = anime.get("episodes", "N/A")
-            url = anime.get("url", "")
-            
-            response_text = (
-                f"⛩️ **Anime Found:**\n\n"
-                f"📌 **{title}**\n"
-                f"⭐ MyAnimeList Score: {score}\n"
-                f"📺 Episodes: {episodes}\n"
-                f"🔗 [More Info]({url})\n\n"
-                f"📝 {synopsis[:250]}..."
-            )
-            await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=False)
-            return
-    except Exception:
-        pass
-
-    # 2. TMDB Search (Movies & Web Series)
-    tmdb_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
+    url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
     try:
-        response = requests.get(tmdb_url, timeout=6)
+        response = requests.get(url)
         data = response.json()
         results = data.get("results", [])
         
         if not results:
-            await update.message.reply_text(
-                f"❌ **No results found.**\n\n"
-                f"Please check the spelling and try a different title."
-            )
+            await update.message.reply_text(f"❌ No movies found for '{query}'. Please check spelling.")
             return
-            
-        item = results[0]
-        title = item.get("title") or item.get("name", "N/A")
-        release_date = item.get("release_date") or item.get("first_air_date", "N/A")
-        overview = item.get("overview") or "No description available."
-        tmdb_rating = item.get("vote_average", "N/A")
+
+        movie = results[0]
+        title = movie.get("title", "Unknown Title")
+        release_date = movie.get("release_date", "N/A")[:4]
+        movie_id = movie.get("id")
         
-        imdb_rating, box_office = get_omdb_details(title)
-        trailer_link = get_youtube_trailer(title)
+        # YouTube trailer fetch karna
+        trailer_link = get_youtube_trailer(f"{title} {release_date}")
         
-        response_text = (
-            f"🎬 **Result Found:**\n\n"
-            f"📌 **{title}** ({release_date})\n"
-            f"⭐ TMDB Rating: {tmdb_rating} / 10\n"
-            f"🌟 IMDb Rating: {imdb_rating}\n"
-            f"💰 Box Office: {box_office}\n"
-        )
+        # Buttons setup
+        keyboard = [
+            [InlineKeyboardButton(f"📥 2.69 GB • {title} ({release_date}) 1080p", callback_data=f"dl_{movie_id}_1080")],
+            [InlineKeyboardButton(f"📥 1.23 GB • {title} ({release_date}) 720p", callback_data=f"dl_{movie_id}_720")],
+        ]
         
         if trailer_link:
-            response_text += f"▶ [Watch Trailer]({trailer_link})\n"
+            keyboard.append([InlineKeyboardButton("📺 Watch Official Trailer", url=trailer_link)])
             
-        response_text += f"\n📝 {overview[:250]}..."
-            
-        await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=False)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        response_text = (
+            f"🎬 *Title : {title} ({release_date})*\n"
+            f"✨ *Your Files is Ready Now*\n\n"
+            f"👇 Choose quality or watch trailer below:"
+        )
+        
+        await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode="Markdown")
         
     except Exception as e:
-        await update.message.reply_text("Error: An internal technical issue occurred while fetching data.")
+        logger.error(f"Error: {e}")
+        await update.message.reply_text("⚠️ An error occurred while processing your request.")
+
+async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data_parts = query.data.split("_")
+    quality = data_parts[-1]
+    
+    await query.message.reply_text(
+        f"✅ Your requested *{quality}p* file link is generated!\n"
+        f"⚠️ *Note:* This file automatically deletes after 1 minute, please forward it.",
+        parse_mode="Markdown"
+    )
 
 def main():
-    if not TELEGRAM_TOKEN:
-        print("Error: TELEGRAM_TOKEN is missing!")
-        return
-        
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_all))
-    
-    print("PrimeMovie Bot is running successfully.")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-if __name__ == "__main__":
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie_handler))
+    app.add_handler(CallbackQueryHandler(button_click_handler))
+
+    print("Bot is running with YouTube & TMDB integration...")
+    app.run_polling()
+
+if __name__ == '__main__':
     main()
