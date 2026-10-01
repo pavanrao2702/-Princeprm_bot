@@ -11,10 +11,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Environment variables (Yahan TELEGRAM_TOKEN kar diya hai jo github yml se match karega)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")  # Jo key aapne add ki hai
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
@@ -34,7 +34,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
-# YouTube se trailer link nikalne ka function
 def get_youtube_trailer(movie_title):
     if not YOUTUBE_API_KEY:
         return None
@@ -73,10 +72,8 @@ async def search_movie_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         release_date = movie.get("release_date", "N/A")[:4]
         movie_id = movie.get("id")
         
-        # YouTube trailer fetch karna
         trailer_link = get_youtube_trailer(f"{title} {release_date}")
         
-        # Buttons setup
         keyboard = [
             [InlineKeyboardButton(f"📥 2.69 GB • {title} ({release_date}) 1080p", callback_data=f"dl_{movie_id}_1080")],
             [InlineKeyboardButton(f"📥 1.23 GB • {title} ({release_date}) 720p", callback_data=f"dl_{movie_id}_720")],
@@ -113,7 +110,7 @@ async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
