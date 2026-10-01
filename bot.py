@@ -66,9 +66,19 @@ async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id
     except Exception as e:
         logger.error(f"Auto-delete failed: {e}")
 
-# Main message handler (चैनल सब्सक्रिप्शन चेकिंग पूरी तरह हटा दी गई है)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_name = update.effective_user.first_name
+    msg = (
+        f"Hey 👋 {user_name} 🍿\n\n"
+        f"🍿 **Welcome To PrimeMovie Multi-Language Bot!**\n\n"
+        f"यहाँ आप किसी भी भाषा में Movies ढूंढ सकते हैं और YouTube वीडियो भी डाउनलोड कर सकते हैं!\n"
+        f"बस नाम लिखकर भेजें या लिंक पेस्ट करें।"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+# Main message handler (Subscription check removed entirely)
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     text = update.message.text.strip()
 
     if "youtube.com" in text or "youtu.be" in text:
