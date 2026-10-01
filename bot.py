@@ -3,23 +3,23 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Fetching credentials from environment variables
+# Environment variables fetch karna
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 OMDB_API_KEY = os.getenv("OMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# Start command handler with professional design based on reference style
+# Professional Start Command Handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "User"
     welcome_text = (
         f"Hey 👋 {user_name} 🍿\n\n"
-        "🍿 **Welcome To PrinceMovie Bot!**\n\n"
+        "🍿 **Welcome To PrimeMovie Bot!**\n\n"
         "Here You Can Request Movie's, Just Send Movie OR WebSeries Name With Proper Spelling..!!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-# Helper function to fetch YouTube trailer link
+# YouTube Trailer Link Fetching
 def get_youtube_trailer(query):
     if not YOUTUBE_API_KEY:
         return None
@@ -34,7 +34,7 @@ def get_youtube_trailer(query):
         pass
     return None
 
-# Helper function to fetch OMDb details
+# OMDb Details Fetching
 def get_omdb_details(title):
     if not OMDB_API_KEY:
         return "N/A", "N/A"
@@ -49,7 +49,7 @@ def get_omdb_details(title):
         pass
     return "N/A", "N/A"
 
-# Main combined search handler
+# Combined Search Handler for Movies, Series, and Anime
 async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -62,7 +62,7 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # 1. Jikan API (Check if the query matches an anime)
+    # 1. Jikan API (Anime Search)
     anime_url = f"https://api.jikan.moe/v4/anime?q={requests.utils.quote(query)}&limit=1"
     try:
         anime_res = requests.get(anime_url, timeout=6).json().get("data", [])
@@ -87,7 +87,7 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # 2. TMDB Search (Movies, Series & Dramas)
+    # 2. TMDB Search (Movies & Web Series)
     tmdb_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
     try:
@@ -139,7 +139,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_all))
     
-    print("PrinceMovie Bot is running successfully.")
+    print("PrimeMovie Bot is running successfully.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
