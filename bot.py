@@ -7,7 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 OMDB_API_KEY = os.getenv("OMDB_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY") # Optional: YouTube Trailer ke liye
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,7 +60,7 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     anime_url = f"https://api.jikan.moe/v4/anime?q={requests.utils.quote(query)}&limit=1"
     try:
         anime_res = requests.get(anime_url).json().get("data", [])
-        if anime_res and anime_res[0].get("title").lower() == query.lower() or len(anime_res) > 0:
+        if anime_res and len(anime_res) > 0:
             anime = anime_res[0]
             title = anime.get("title", "N/A")
             score = anime.get("score", "N/A")
@@ -95,16 +95,15 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         # Top result pick karna
         item = results[0]
-        media_type = item.get("media_type", "movie")
         title = item.get("title") or item.get("name", "N/A")
         release_date = item.get("release_date") or item.get("first_air_date", "N/A")
         overview = item.get("overview", "No description available.")
         tmdb_rating = item.get("vote_average", "N/A")
         
-        # OMDb se extra ratings lana agar movie/series ho
+        # OMDb se extra ratings lana
         imdb_rating, box_office = get_omdb_details(title)
         
-        # YouTube se Trailer link lana
+        # YouTube से Trailer link lana
         trailer_link = get_youtube_trailer(title)
         
         response_text = (
@@ -116,7 +115,7 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         if trailer_link:
-            response_text += f"▶️ [Watch Trailer]({trailer_link})\n"
+            response_text += f"▶ [Watch Trailer]({trailer_link})\n"
             
         response_text += f"\n📝 {overview[:200]}..."
             
