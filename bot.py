@@ -3,22 +3,23 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Render environment variables se credentials fetch karna
+# Fetching credentials from environment variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 OMDB_API_KEY = os.getenv("OMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# Start command handler - Aapke aur aapke friends ke liye welcome message
+# Start command handler with professional design based on reference style
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name or "Friend"
-    await update.message.reply_text(
-        f"Hello {user_name}! Main aapka Ultimate Entertainment Bot hoon 🎬✨\n\n"
-        "Aap ya aapke friends jab bhi chahein, kisi bhi **Movie, Web Series ya Anime** ka naam yahan bhejiye. "
-        "Main TMDB details, IMDb ratings, YouTube trailers aur Anime ki saari jankari ek sath dhoond kar launga! ❤️"
+    user_name = update.effective_user.first_name or "User"
+    welcome_text = (
+        f"Hey 👋 {user_name} 🍿\n\n"
+        "🍿 **Welcome To PrinceMovie Bot!**\n\n"
+        "Here You Can Request Movie's, Just Send Movie OR WebSeries Name With Proper Spelling..!!"
     )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-# YouTube Trailer Link nikalne ka helper function
+# Helper function to fetch YouTube trailer link
 def get_youtube_trailer(query):
     if not YOUTUBE_API_KEY:
         return None
@@ -33,7 +34,7 @@ def get_youtube_trailer(query):
         pass
     return None
 
-# OMDb Ratings nikalne ka helper function
+# Helper function to fetch OMDb details
 def get_omdb_details(title):
     if not OMDB_API_KEY:
         return "N/A", "N/A"
@@ -48,7 +49,7 @@ def get_omdb_details(title):
         pass
     return "N/A", "N/A"
 
-# Main Combined Search Handler - Sabhi friends ke liye safe aur fast search
+# Main combined search handler
 async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -56,13 +57,12 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     
     if not TMDB_API_KEY:
-        await update.message.reply_text("Oops! TMDB API Key configure nahi hai Render par.")
+        await update.message.reply_text("Error: TMDB API Key is not configured on the server.")
         return
 
-    # Typing action dikhana taaki user ko pata chale bot search kar raha hai
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # 1. Jikan API (Check if it's an Anime first)
+    # 1. Jikan API (Check if the query matches an anime)
     anime_url = f"https://api.jikan.moe/v4/anime?q={requests.utils.quote(query)}&limit=1"
     try:
         anime_res = requests.get(anime_url, timeout=6).json().get("data", [])
@@ -87,7 +87,7 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # 2. TMDB Search (Movies & TV Shows)
+    # 2. TMDB Search (Movies, Series & Dramas)
     tmdb_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
     try:
@@ -95,26 +95,24 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = response.json()
         results = data.get("results", [])
         
-        # Agar movie/series na mile toh friendly message
         if not results:
-            await update.message.reply_text(f"Hmm, '{query}' naam se mujhe koi movie ya series nahi mili dost. Spelling check karke dobara try karo!")
+            await update.message.reply_text(
+                f"❌ **No results found.**\n\n"
+                f"Please check the spelling and try a different title."
+            )
             return
             
-        # Top result pick karna
         item = results[0]
         title = item.get("title") or item.get("name", "N/A")
         release_date = item.get("release_date") or item.get("first_air_date", "N/A")
         overview = item.get("overview") or "No description available."
         tmdb_rating = item.get("vote_average", "N/A")
         
-        # OMDb se extra ratings lana
         imdb_rating, box_office = get_omdb_details(title)
-        
-        # YouTube se Trailer link lana
         trailer_link = get_youtube_trailer(title)
         
         response_text = (
-            f"🎬 **Entertainment Result:**\n\n"
+            f"🎬 **Result Found:**\n\n"
             f"📌 **{title}** ({release_date})\n"
             f"⭐ TMDB Rating: {tmdb_rating} / 10\n"
             f"🌟 IMDb Rating: {imdb_rating}\n"
@@ -129,21 +127,19 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response_text, parse_mode="Markdown", disable_web_page_preview=False)
         
     except Exception as e:
-        await update.message.reply_text("Oops! Kuch technical issue aa gaya data fetch karne mein. Thodi der baad try karna!")
+        await update.message.reply_text("Error: An internal technical issue occurred while fetching data.")
 
 def main():
     if not TELEGRAM_TOKEN:
         print("Error: TELEGRAM_TOKEN is missing!")
         return
         
-    # Build application securely
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_all))
     
-    print("Multi-API Entertainment Bot is running smoothly...")
+    print("PrinceMovie Bot is running successfully.")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
