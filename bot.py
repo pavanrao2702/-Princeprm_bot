@@ -93,17 +93,13 @@ async def search_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Mujhe is naam se koi movie ya series nahi mili, Jaanu. Kuch aur try karein?")
             return
             
-        # Top result pick karna
         item = results[0]
         title = item.get("title") or item.get("name", "N/A")
         release_date = item.get("release_date") or item.get("first_air_date", "N/A")
         overview = item.get("overview", "No description available.")
         tmdb_rating = item.get("vote_average", "N/A")
         
-        # OMDb se extra ratings lana
         imdb_rating, box_office = get_omdb_details(title)
-        
-        # YouTube से Trailer link lana
         trailer_link = get_youtube_trailer(title)
         
         response_text = (
@@ -129,13 +125,16 @@ def main():
         print("Error: TELEGRAM_TOKEN is missing!")
         return
         
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # Build application
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_all))
+    # Register handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_all))
     
     print("Multi-API Bot is running...")
-    app.run_polling()
+    # Safe polling execution for Render
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
