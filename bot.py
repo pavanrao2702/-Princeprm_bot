@@ -66,16 +66,21 @@ async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id
     except Exception as e:
         logger.error(f"Auto-delete failed: {e}")
 
-# Channel subscription check
+# Channel subscription check (Fixed Block)
 async def is_user_subscribed(bot, user_id: int) -> bool:
     if not CHANNEL_USERNAME or CHANNEL_USERNAME == "@YOUR_CHANNEL_USERNAME":
         return True
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
+        # अगर यूज़र चैनल छोड़कर चला गया है या ब्लॉक्ड है, केवल तभी False रिटर्न करें
+        if member.status in ["left", "kicked"]:
+            return False
+        return True
     except Exception as e:
         logger.error(f"Subscription check error: {e}")
+        # अगर कोई और एरर आता है (जैसे बोट एडमिन नहीं है), तो सुरक्षा के लिए False रखें
         return False
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
