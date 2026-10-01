@@ -1,12 +1,11 @@
 import os
 from telegram.ext import ApplicationBuilder
 
-TOKEN = os.environ.get('BOT_TOKEN')
+TOKEN = os.environ.get("BOT_TOKEN")
 
-if __name__ == '__main__':
+if not TOKEN:
+    raise ValueError("BOT_TOKEN is not set")
+
+if __name__ == "__main__":
     application = ApplicationBuilder().token(TOKEN).build()
-    
-    # Yahan apne handlers ya commands add kar sakte ho
-    
-    print("Bot is starting...")
     application.run_polling()
