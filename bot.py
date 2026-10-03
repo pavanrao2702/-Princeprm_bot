@@ -2,11 +2,12 @@ import os
 import logging
 import asyncio
 import requests
+import yt_dlp
 from threading import Thread
 from flask import Flask
 from pymongo import MongoClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 # 1. Logging setup
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -17,7 +18,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "PrimeMovie Bot is alive and running!"
+    return "PrimeMovie yt-dlp Bot is alive and running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -25,74 +26,40 @@ def run_flask():
 
 # 3. Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-MONGO_URI = os.getenv("MONGO_URI")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY") 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_CX = os.getenv("GOOGLE_CX")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
 
-# MongoDB Setup
+# MongoDB Safe Setup
 try:
-    if MONGO_URI:
-        client = MongoClient(MONGO_URI)
+    if MONGO_URI and MONGO_URI.startswith(("mongodb://", "mongodb+srv://")):
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        client.admin.command('ping')
         db = client['primemovie_db']
         movies_collection = db['movies']
         logger.info("MongoDB Connected Successfully!")
     else:
         movies_collection = None
-        logger.warning("MONGO_URI check bypassed.")
+        logger.warning("MONGO_URI is missing or has an invalid scheme. Bypassing database.")
 except Exception as e:
     logger.error(f"MongoDB Connection Error: {e}")
     movies_collection = None
-
-LANG_MAP = {
-    "hi": "Hindi 🇮🇳",
-    "en": "English 🇺🇸",
-    "te": "Telugu 🇮🇳",
-    "ta": "Tamil 🇮🇳",
-    "ml": "Malayalam 🇮🇳",
-    "kn": "Kannada 🇮🇳",
-    "bn": "Bengali 🇮🇳"
-}
-
-# 30 minute auto-delete
-async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 1800):
-    await asyncio.sleep(delay)
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except Exception as e:
-        logger.error(f"Auto-delete failed: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     msg = (
         f"Hey 👋 {user_name} 🍿\n\n"
-        f"🍿 **Welcome To PrimeMovie Multi-Language Bot!**\n\n"
-        f"यहाँ आप किसी भी भाषा में Movies ढूंढ सकते हैं और YouTube वीडियो भी डाउनलोड कर सकते हैं!\n"
-        f"बस नाम लिखकर भेजें या लिंक पेस्ट करें।"
+        f"🍿 **Welcome To PrimeMovie yt-dlp Bot!**\n\n"
+        f"Kisi bhi movie ya song ka naam bhejein, bot yt-dlp se download karke direct video bhejega!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # Main message handler
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    await search_and_download_media(update, context, text)
 
-    if "youtube.com" in text or "youtu.be" in text:
-        status_msg = await update.message.reply_text("⚡ *Processing YouTube link...*", parse_mode="Markdown")
-        try:
-            res = requests.post("https://cobalt.tools", json={"url": text, "vQuality": "720"}).json()
-            if res.get("status") in ["stream", "picker"]:
-                await status_msg.delete()
-                await update.message.reply_text("🎬 **Ready!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", url=res.get("url"))]]))
-            else:
-                await status_msg.edit_text("❌ Link fetch failed.")
-        except Exception:
-            await status_msg.edit_text("⚠️ API Error.")
-    else:
-        await search_tmdb_and_show_languages(update, context, text)
-
-# TMDB search
-async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
+# TMDB Metadata & yt-dlp Video Engine
+async def search_and_download_media(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     if not TMDB_API_KEY:
         await update.message.reply_text("Error: TMDB API Key is missing.")
         return
@@ -106,134 +73,47 @@ async def search_tmdb_and_show_languages(update: Update, context: ContextTypes.D
         filtered = [r for r in results if r.get("media_type") in ["movie", "tv"]]
         
         if not filtered:
-            await status_msg.edit_text(f"❌ '{query}' नाम की कोई मूवी नहीं मिली।")
-            return
+            title = query
+        else:
+            item = filtered[0]
+            title = item.get("title") or item.get("name")
         
-        item = filtered[0]
-        title = item.get("title") or item.get("name")
-        orig_lang = item.get("original_language", "en")
-        date = (item.get("release_date") or item.get("first_air_date") or "N/A")[:4]
+        await status_msg.edit_text(f"📥 Downloading **{title}** using yt-dlp engine...")
+
+        os.makedirs("downloads", exist_ok=True)
         
-        keyboard = [
-            [
-                InlineKeyboardButton("Hindi 🇮🇳", callback_data=f"lang_hi_{title}_{date}"),
-                InlineKeyboardButton("English 🇺🇸", callback_data=f"lang_en_{title}_{date}")
-            ],
-            [
-                InlineKeyboardButton("Telugu 🇮🇳", callback_data=f"lang_te_{title}_{date}"),
-                InlineKeyboardButton("Tamil 🇮🇳", callback_data=f"lang_ta_{title}_{date}")
-            ],
-            [
-                InlineKeyboardButton("All Languages Mix 🌐", callback_data=f"lang_all_{title}_{date}")
-            ]
-        ]
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
+            'noplaylist': True,
+        }
         
-        detected_lang = LANG_MAP.get(orig_lang, orig_lang.upper())
-        await status_msg.delete()
-        await update.message.reply_text(
-            text=f"🎬 **Found:** `{title} ({date})`\n🗣️ **Original Language:** {detected_lang}\n\n👇 **अपनी पसंदीदा भाषा चुनें:**",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        search_query = f"ytsearch1: {title} full movie"
+        
+        def download_video():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_query, download=True)
+                if 'entries' in info:
+                    info = info['entries'][0]
+                filename = ydl.prepare_filename(info)
+                return filename
+
+        loop = asyncio.get_running_loop()
+        filename = await loop.run_in_executor(None, download_video)
+
+        if filename and os.path.exists(filename):
+            await status_msg.edit_text("📤 Uploading video to Telegram server...")
+            with open(filename, 'rb') as video_file:
+                await context.bot.send_video(chat_id=update.effective_chat.id, video=video_file)
+            
+            os.remove(filename)
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Video download fail ho gaya.")
+
     except Exception as e:
-        logger.error(f"TMDB Search error: {e}")
-        await status_msg.edit_text("⚠️ Details fetch error.")
-
-# Button click handler
-async def button_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data.split("_")
-    if data[0] == "lang":
-        selected_lang = data[1]
-        title = data[2]
-        date = data[3]
-        
-        lang_suffix = "" if selected_lang == "all" else f"{selected_lang} dubbed"
-        search_query = f"{title} {date} {lang_suffix}".strip()
-        
-        await query.message.edit_text(f"⏳ **Searching links for ({selected_lang.upper()})...**")
-        await execute_mega_search(query.message, context, search_query, title)
-
-# Search Architecture: MongoDB -> Google Custom Search -> YouTube Backup
-async def execute_mega_search(message, context, search_query, display_title):
-    movie_data = None
-    
-    # स्टेप 1: MongoDB डेटाबेस चेक करें
-    if movies_collection is not None:
-        movie_data = movies_collection.find_one({"title": {"$regex": display_title, "$options": "i"}})
-    
-    if movie_data:
-        keyboard = [
-            [InlineKeyboardButton("📥 1080p Direct Download", url=movie_data.get("link_1080", "#"))],
-            [InlineKeyboardButton("📥 720p Direct Download", url=movie_data.get("link_720", "#"))]
-        ]
-        dl_msg = await message.reply_text(
-            text=f"🚀 **{display_title}**\nडेटाबेस में डायरेक्ट लिंक्स मिल गए हैं!\n\n⚠️ यह मैसेज 30 मिनट में डिलीट हो जाएगा।",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        asyncio.create_task(delete_message_after_delay(context, message.chat_id, dl_msg.message_id, 1800))
-        await message.delete()
-        return
-
-    # स्टेप 2: गूगल कस्टम सर्च (अगर DB में न मिले)
-    if GOOGLE_API_KEY and GOOGLE_CX:
-        try:
-            google_url = f"https://www.googleapis.com/customsearch/v1?key={GOOGLE_API_KEY}&cx={GOOGLE_CX}&q={requests.utils.quote(search_query)}"
-            g_res = requests.get(google_url).json()
-            items = g_res.get("items", [])
-            if items:
-                keyboard = []
-                for item in items[:3]:
-                    title_text = item.get("title", "Link")[:30] + "..."
-                    keyboard.append([InlineKeyboardButton(title_text, url=item.get("link"))])
-                
-                dl_msg = await message.reply_text(
-                    text=f"🌐 **Web Results for {display_title}:**\nगूगल पर कुछ लिंक्स मिले हैं:\n\n⚠️ 30 मिनट में डिलीट हो जाएगा।",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown"
-                )
-                asyncio.create_task(delete_message_after_delay(context, message.chat_id, dl_msg.message_id, 1800))
-                await message.delete()
-                return
-        except Exception as e:
-            logger.error(f"Google Search error: {e}")
-
-    # स्टेप 3: यूट्यूब बैकअप सर्च
-    if YOUTUBE_API_KEY:
-        try:
-            yt_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={requests.utils.quote(search_query)}&type=video&key={YOUTUBE_API_KEY}"
-            yt_res = requests.get(yt_url).json()
-            videos = yt_res.get("items", [])
-            if videos:
-                keyboard = []
-                for vid in videos[:3]:
-                    video_id = vid.get("id", {}).get("videoId")
-                    video_title = vid.get("snippet", {}).get("title", "Video")[:30] + "..."
-                    if video_id:
-                        keyboard.append([InlineKeyboardButton(f"▶️ {video_title}", url=f"https://youtube.com/watch?v={video_id}")])
-                
-                if keyboard:
-                    dl_msg = await message.reply_text(
-                        text=f"📺 **YouTube Results for {display_title}:**\n\n⚠️ 30 मिनट में डिलीट हो जाएगा।",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode="Markdown"
-                    )
-                    asyncio.create_task(delete_message_after_delay(context, message.chat_id, dl_msg.message_id, 1800))
-                    await message.delete()
-                    return
-        except Exception as e:
-            logger.error(f"YouTube Search error: {e}")
-
-    fallback_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
-    keyboard = [[InlineKeyboardButton("🔍 Google पर खोजें", url=fallback_url)]]
-    
-    await message.edit_text(
-        text=f"❌ माफ कीजिए, '{display_title}' के लिए हमारे डेटाबेस या API में डायरेक्ट लिंक्स उपलब्ध नहीं हैं。\n\nआप नीचे दिए गए बटन से सीधे खोज सकते हैं:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+        logger.error(f"yt-dlp processing error: {e}")
+        await status_msg.edit_text(f"⚠️ Error during media processing: {str(e)}")
 
 def main():
     if not TELEGRAM_TOKEN:
@@ -245,11 +125,11 @@ def main():
     flask_thread.start()
     logger.info("Flask Web Server Started in Background Thread.")
 
+    # Using ApplicationBuilder (Compatible with python-telegram-bot v20+)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, incoming_message_handler))
-    app.add_handler(CallbackQueryHandler(button_click_handler))
     
     print("PrimeMovie Web Service & Telegram Bot is running successfully...")
     app.run_polling()
