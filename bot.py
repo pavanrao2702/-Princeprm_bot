@@ -5,7 +5,6 @@ import requests
 import yt_dlp
 from threading import Thread
 from flask import Flask
-from pymongo import MongoClient
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -27,22 +26,6 @@ def run_flask():
 # 3. Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
-
-# MongoDB Safe Setup
-try:
-    if MONGO_URI and MONGO_URI.startswith(("mongodb://", "mongodb+srv://")):
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        client.admin.command('ping')
-        db = client['primemovie_db']
-        movies_collection = db['movies']
-        logger.info("MongoDB Connected Successfully!")
-    else:
-        movies_collection = None
-        logger.warning("MONGO_URI is missing or has an invalid scheme. Bypassing database.")
-except Exception as e:
-    logger.error(f"MongoDB Connection Error: {e}")
-    movies_collection = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
@@ -64,14 +47,6 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("Error: TMDB API Key is missing.")
         return
 
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': 'downloads/%(title)s.%(ext)s',
-            'noplaylist': True,
-            'extractor-args': {'youtube': {'player-client': ['android', 'web']}},
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-
     status_msg = await update.message.reply_text("🔍 *Searching title details...*", parse_mode="Markdown")
     url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
@@ -91,7 +66,7 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
         os.makedirs("downloads", exist_ok=True)
         
         ydl_opts = {
-            'format': 'best[ext=mp4]/best',
+            'format': '18',  # 360p single file format (No ffmpeg/merging required)
             'outtmpl': 'downloads/%(title)s.%(ext)s',
             'noplaylist': True,
         }
@@ -133,7 +108,7 @@ def main():
     flask_thread.start()
     logger.info("Flask Web Server Started in Background Thread.")
 
-    # Using ApplicationBuilder (Compatible with python-telegram-bot v20+)
+    # Using ApplicationBuilder (Proper v20+ syntax to avoid Updater crashes)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
