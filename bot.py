@@ -64,6 +64,14 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("Error: TMDB API Key is missing.")
         return
 
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
+            'noplaylist': True,
+            'extractor-args': {'youtube': {'player-client': ['android', 'web']}},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
     status_msg = await update.message.reply_text("🔍 *Searching title details...*", parse_mode="Markdown")
     url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
     
