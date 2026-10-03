@@ -1,3 +1,4 @@
+यहाँ आपके अपडेटेड पाइथन कोड (bot.py) का पूरा टेक्स्ट दिया गया है। आप इसे कॉपी करके आसानी से किसी भी टेक्स्ट एडिटर (जैसे Notepad या Google Docs) में पेस्ट कर सकते हैं और Print > Save as PDF का उपयोग करके अपनी पीडीएफ फाइल बना सकते हैं:
 import os
 import logging
 import asyncio
@@ -45,9 +46,6 @@ except Exception as e:
     logger.error(f"MongoDB Connection Error: {e}")
     movies_collection = None
 
-# 📢 Telegram Channel Username
-CHANNEL_USERNAME = "@Princeprm_bot" 
-
 LANG_MAP = {
     "hi": "Hindi 🇮🇳",
     "en": "English 🇺🇸",
@@ -66,7 +64,6 @@ async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id
     except Exception as e:
         logger.error(f"Auto-delete failed: {e}")
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     msg = (
@@ -77,7 +74,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# Main message handler (Subscription check removed entirely)
+# Main message handler
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
@@ -190,7 +187,7 @@ async def execute_mega_search(message, context, search_query, display_title):
             items = g_res.get("items", [])
             if items:
                 keyboard = []
-                for item in items[:3]: # टॉप 3 रिजल्ट्स
+                for item in items[:3]:
                     title_text = item.get("title", "Link")[:30] + "..."
                     keyboard.append([InlineKeyboardButton(title_text, url=item.get("link"))])
                 
@@ -231,20 +228,24 @@ async def execute_mega_search(message, context, search_query, display_title):
         except Exception as e:
             logger.error(f"YouTube Search error: {e}")
 
-    await message.edit_text(f"❌ माफ कीजिए, '{display_title}' के लिए कोई लिंक्स नहीं मिले।")
+    fallback_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
+    keyboard = [[InlineKeyboardButton("🔍 Google पर खोजें", url=fallback_url)]]
+    
+    await message.edit_text(
+        text=f"❌ माफ कीजिए, '{display_title}' के लिए हमारे डेटाबेस या API में डायरेक्ट लिंक्स उपलब्ध नहीं हैं。\n\nआप नीचे दिए गए बटन से सीधे खोज सकते हैं:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 def main():
     if not TELEGRAM_TOKEN:
         logger.error("Telegram Token is missing!")
         return
 
-    # Flask background server start for Render
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     logger.info("Flask Web Server Started in Background Thread.")
 
-    # Telegram Bot Application
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -256,3 +257,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
