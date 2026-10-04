@@ -8,11 +8,9 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
-# 1. Logging setup
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 2. Render Port Binding Fix (Dummy Web Server)
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -23,7 +21,6 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 3. Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
@@ -36,12 +33,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# Main message handler
 async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     await search_and_download_media(update, context, text)
 
-# TMDB Metadata & yt-dlp Video Engine
 async def search_and_download_media(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     if not TMDB_API_KEY:
         await update.message.reply_text("Error: TMDB API Key is missing.")
@@ -66,23 +61,24 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
         os.makedirs("downloads", exist_ok=True)
         
         ydl_opts = {
-            'format': '18',  # 360p single file format (No ffmpeg/merging required)
+            'format': '18',
             'outtmpl': 'downloads/%(title)s.%(ext)s',
             'noplaylist': True,
+            'extractor-args': {'youtube': {'player-client': ['android', 'web']}},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
         search_query = f"ytsearch1: {title} full movie"
         
-        def download_video():
+        def download_version():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_query, download=True)
                 if 'entries' in info:
                     info = info['entries'][0]
-                filename = ydl.prepare_filename(info)
-                return filename
+                return ydl.prepare_filename(info)
 
         loop = asyncio.get_running_loop()
-        filename = await loop.run_in_executor(None, download_video)
+        filename = await loop.run_in_executor(None, download_version)
 
         if filename and os.path.exists(filename):
             await status_msg.edit_text("📤 Uploading video to Telegram server...")
@@ -106,15 +102,12 @@ def main():
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
-    logger.info("Flask Web Server Started in Background Thread.")
 
-    # Using ApplicationBuilder (Proper v20+ syntax to avoid Updater crashes)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, incoming_message_handler))
     
-    print("PrimeMovie Web Service & Telegram Bot is running successfully...")
     app.run_polling()
 
 if __name__ == '__main__':
