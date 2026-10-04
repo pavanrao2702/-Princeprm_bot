@@ -1,135 +1,98 @@
-import os
-import logging
-import asyncio
 import requests
-import yt_dlp
-from threading import Thread
-from flask import Flask
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import telebot
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+TMDB_API_KEY = 'YOUR_TMDB_API_KEY'
 
-flask_app = Flask(__name__)
+bot = telebot.TeleBot(TOKEN)
 
-@flask_app.route('/')
-def home():
-    return "PrimeMovie Archive Bot is alive and running!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    flask_app.run(host='0.0.0.0', port=port)
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+  welcome_text = (
+      '👋 नमस्ते! आपका स्वागत है।\n\n'
+      'किसी भी फिल्म की जानकारी के लिए टाइप करें:\n'
+      '`/movie फिल्म का नाम`\n\n'
+      'उदाहरण: `/movie Dhoom`'
+  )
+  bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name
-    msg = (
-        f"Hey 👋 {user_name} 🍿\n\n"
-        f"🍿 **Welcome To PrimeMovie Archive Bot!**\n\n"
-        f"Kisi bhi movie ka naam bhejein, bot Archive.org se download karke direct video bhejega!"
+@bot.message_handler(commands=['movie'])
+def search_movie(message):
+  query_parts = message.text.split(maxsplit=1)
+  if len(query_parts) < 2:
+    bot.reply_to(
+        message,
+        'कृपया मूवी का नाम लिखें। उदाहरण: `/movie Dhoom`',
+        parse_mode='Markdown',
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    return
 
-async def incoming_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    await search_and_download_media(update, context, text)
+  movie_name = query_parts[1]
 
-async def search_and_download_media(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    if not TMDB_API_KEY:
-        await update.message.reply_text("Error: TMDB API Key is missing.")
-        return
+  # TMDB API से इंग्लिश में सर्च (क्योंकि TMDB पर इंग्लिश डेटा सबसे सटीक होता है)
+  url = f'https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={movie_name}&language=en-US'
 
-    status_msg = await update.message.reply_text("🔍 *Searching title details...*", parse_mode="Markdown")
-    url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
-    
-    try:
-        response = requests.get(url).json()
-        results = response.get("results", [])
-        filtered = [r for r in results if r.get("media_type") in ["movie", "tv"]]
-        
-        if not filtered:
-            title = query
-        else:
-            item = filtered[0]
-            title = item.get("title") or item.get("name")
-        
-        await status_msg.edit_text(f"📥 Searching & Downloading **{title}** from Archive.org...")
+  try:
+    response = requests.get(url)
+    data = response.json()
+    results = data.get('results', [])
 
-        os.makedirs("downloads", exist_ok=True)
-        
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': 'downloads/%(title)s.%(ext)s',
-            'noplaylist': True,
-        }
-        
-        search_query = f"archive: {title}"
-        
-        def download_version():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_query, download=True)
-                if 'entries' in info:
-                    info = info['entries'][0]
-                return ydl.prepare_filename(info)
+    if not results:
+      bot.reply_to(
+          message, '❌ इस नाम से कोई मूवी नहीं मिली। कृपया दूसरा नाम ट्राय करें।'
+      )
+      return
 
-        loop = asyncio.get_running_loop()
-        filename = await loop.run_in_executor(None, download_version)
+    # टॉप 5 फिल्में दिखाना
+    response_text = (
+        f'🎬 *"{movie_name}" से जुड़ी फिल्में (भाषा विकल्प के साथ):*\n\n'
+    )
 
-        if filename and os.path.exists(filename):
-            await status_msg.edit_text("📤 Uploading video to Telegram server...")
-            with open(filename, 'rb') as video_file:
-                await context.bot.send_video(chat_id=update.effective_chat.id, video=video_file)
-            
-            os.remove(filename)
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text("❌ Archive.org par yeh video nahi mili.")
+    for i, movie in enumerate(results[:5], 1):
+      title = movie.get('title', 'N/A')
+      release_date = movie.get('release_date', 'N/A')
+      year = release_date.split('-')[0] if release_date else 'N/A'
+      rating = movie.get('vote_average', 'N/A')
 
-    except Exception as e:
-        logger.error(f"Archive.org processing error: {e}")
-        try:
-            await status_msg.edit_text(f"⚠️ Trying alternative search for **{query}**...")
-            ydl_opts_fallback = {
-                'format': '18',
-                'outtmpl': 'downloads/%(title)s.%(ext)s',
-                'noplaylist': True,
-            }
-            def download_fallback():
-                with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
-                    info = ydl.extract_info(f"ytsearch1:{query}", download=True)
-                    if 'entries' in info:
-                        info = info['entries'][0]
-                    return ydl.prepare_filename(info)
-            
-            filename = await loop.run_in_executor(None, download_fallback)
-            if filename and os.path.exists(filename):
-                with open(filename, 'rb') as video_file:
-                    await context.bot.send_video(chat_id=update.effective_chat.id, video=video_file)
-                os.remove(filename)
-                await status_msg.delete()
-            else:
-                await status_msg.edit_text("❌ Download fail ho gaya.")
-        except Exception as err:
-            await status_msg.edit_text(f"❌ Error: {str(err)}")
+      response_text += f'{i}. *{title}* ({year}) - ⭐ {rating}/10\n'
 
-def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("Telegram Token is missing!")
-        return
+    # यूजर को भाषा चुनने के लिए नीचे बटन देना
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton('🇬🇧 English', callback_data='lang_en'),
+        InlineKeyboardButton('🇮🇳 हिंदी (Hindi)', callback_data='lang_hi'),
+    )
 
-    flask_thread = Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+    response_text += (
+        '\n👇 *अपनी पसंदीदा भाषा चुनें:*\n(नोट: सभी फिल्में हर भाषा में उपलब्ध नहीं'
+        ' होतीं, इसलिए सटीक जानकारी के लिए इंग्लिश सबसे बेहतर है)'
+    )
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, incoming_message_handler))
-    
-    app.run_polling()
+    bot.reply_to(message, response_text, parse_mode='Markdown', reply_markup=markup)
 
-if __name__ == '__main__':
-    main()
+  except Exception as e:
+    bot.reply_to(
+        message,
+        '⚠️ कुछ तकनीकी समस्या आ गई है। कृपया थोड़ी देर बाद कोशिश करें।',
+    )
+
+
+# बटन क्लिक होने पर क्या होगा
+@bot.callback_query_handler(func=lambda call: call.data.startswith('lang_'))
+def language_callback(call):
+  lang = call.data.split('_')[1]
+  if lang == 'hi':
+    bot.answer_callback_query(
+        call.id,
+        'हिंदी मोड चुना गया (यदि उपलब्ध हुआ तो डेटा दिखेगा)',
+        show_alert=True,
+    )
+  else:
+    bot.answer_callback_query(call.id, 'English mode selected', show_alert=True)
+
+
+print('Bot is running...')
+bot.infinity_polling()
