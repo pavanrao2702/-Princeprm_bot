@@ -15,7 +15,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "PrimeMovie yt-dlp Bot is alive and running!"
+    return "PrimeMovie Archive Bot is alive and running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -28,8 +28,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     msg = (
         f"Hey 👋 {user_name} 🍿\n\n"
-        f"🍿 **Welcome To PrimeMovie yt-dlp Bot!**\n\n"
-        f"Kisi bhi movie ya song ka naam bhejein, bot yt-dlp se download karke direct video bhejega!"
+        f"🍿 **Welcome To PrimeMovie Archive Bot!**\n\n"
+        f"Kisi bhi movie ka naam bhejein, bot Archive.org se download karke direct video bhejega!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -56,19 +56,17 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
             item = filtered[0]
             title = item.get("title") or item.get("name")
         
-        await status_msg.edit_text(f"📥 Downloading **{title}** using yt-dlp engine...")
+        await status_msg.edit_text(f"📥 Searching & Downloading **{title}** from Archive.org...")
 
         os.makedirs("downloads", exist_ok=True)
         
         ydl_opts = {
-            'format': '18',
+            'format': 'best[ext=mp4]/best',
             'outtmpl': 'downloads/%(title)s.%(ext)s',
             'noplaylist': True,
-            'extractor-args': {'youtube': {'player-client': ['android', 'web']}},
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        search_query = f"ytsearch1: {title} full movie"
+        search_query = f"archive: {title}"
         
         def download_version():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -88,11 +86,34 @@ async def search_and_download_media(update: Update, context: ContextTypes.DEFAUL
             os.remove(filename)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("❌ Video download fail ho gaya.")
+            await status_msg.edit_text("❌ Archive.org par yeh video nahi mili.")
 
     except Exception as e:
-        logger.error(f"yt-dlp processing error: {e}")
-        await status_msg.edit_text(f"⚠️ Error during media processing: {str(e)}")
+        logger.error(f"Archive.org processing error: {e}")
+        try:
+            await status_msg.edit_text(f"⚠️ Trying alternative search for **{query}**...")
+            ydl_opts_fallback = {
+                'format': '18',
+                'outtmpl': 'downloads/%(title)s.%(ext)s',
+                'noplaylist': True,
+            }
+            def download_fallback():
+                with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+                    info = ydl.extract_info(f"ytsearch1:{query}", download=True)
+                    if 'entries' in info:
+                        info = info['entries'][0]
+                    return ydl.prepare_filename(info)
+            
+            filename = await loop.run_in_executor(None, download_fallback)
+            if filename and os.path.exists(filename):
+                with open(filename, 'rb') as video_file:
+                    await context.bot.send_video(chat_id=update.effective_chat.id, video=video_file)
+                os.remove(filename)
+                await status_msg.delete()
+            else:
+                await status_msg.edit_text("❌ Download fail ho gaya.")
+        except Exception as err:
+            await status_msg.edit_text(f"❌ Error: {str(err)}")
 
 def main():
     if not TELEGRAM_TOKEN:
