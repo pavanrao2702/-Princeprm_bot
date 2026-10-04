@@ -23,7 +23,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def home():
-  return "PrimeMovie Archive Bot is alive and running!"
+  return "PrimeMovie Bot is alive and running!"
 
 
 def run_flask():
@@ -40,8 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   msg = (
       f"Hey 👋 {user_name} 🍿\n\n"
       "🍿 **Welcome To PrimeMovie Bot!**\n\n"
-      "Kisi bhi movie ka naam bhejein, main usse judi saari movies ki list"
-      " dikhaunga!"
+      "किसी भी मूवी का नाम भेजें, मैं उससे जुड़ी सभी फिल्मों की लिस्ट दिखाऊंगा!"
   )
   await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -58,7 +57,6 @@ async def incoming_message_handler(
       f"🔍 Searching **{query}**...", parse_mode="Markdown"
   )
 
-  # TMDB se multi-language search
   tmdb_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
 
   try:
@@ -77,9 +75,9 @@ async def incoming_message_handler(
       )
       return
 
-    # टॉप 5 विकल्प बटन के रूप में दिखाना
+    # सभी मिलती-जुलती फिल्मों के बटन तैयार करना
     keyboard = []
-    for item in filtered[:5]:  # टॉप 5 परिणाम
+    for item in filtered[:6]:  # टॉप 6 परिणाम
       title = item.get("title") or item.get("name")
       year = (
           item.get("release_date", "")[:4]
@@ -89,7 +87,6 @@ async def incoming_message_handler(
       media_id = item.get("id")
       media_type = item.get("media_type")
 
-      # कॉलबैक डेटा में ID और type भेजेंगे ताकि सही फिल्म डाउनलोड हो सके
       callback_data = f"sel_{media_type}_{media_id}"
       keyboard.append(
           [InlineKeyboardButton(f"🎬 {title} ({year})", callback_data=callback_data)]
@@ -107,7 +104,6 @@ async def incoming_message_handler(
     await status_msg.edit_text(f"⚠️ Error: {str(e)}")
 
 
-# जब यूजर किसी फिल्म के बटन पर क्लिक करेगा
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
   query = update.callback_query
   await query.answer()
@@ -118,82 +114,35 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
   _, media_type, media_id = data.split("_")
 
-  # TMDB से उस खास फिल्म की डिटेल निकालना
   detail_url = f"https://api.themoviedb.org/3/{media_type}/{media_id}?api_key={TMDB_API_KEY}"
   detail_resp = requests.get(detail_url).json()
   title = detail_resp.get("title") or detail_resp.get("name")
+  year = (
+      detail_resp.get("release_date", "")[:4]
+      or detail_resp.get("first_air_date", "")[:4]
+      or ""
+  )
+  if year:
+    full_title_query = f"{title} {year}"
+  else:
+    full_title_query = title
 
-  await query.edit_message_text(
-      f"📥 Searching **{title}** on Archive.org...", parse_mode="Markdown"
+  encoded_title = requests.utils.quote(full_title_query)
+  simple_encoded = requests.utils.quote(title)
+
+  # आपके निर्देशानुसार: सबसे ऊपर डाउनलोड और स्ट्रीम करने के विकल्प, फिर अन्य वेबसाइट्स के लिंक्स
+  links_msg = (
+      f"🎬 *{title}* ({year})\n\n"
+      "📥 *सबसे पहले देखें और डाउनलोड करें (Direct Stream & Download):*\n"
+      f"• [Archive.org Direct Download & Stream](https://archive.org/search.php?query={encoded_title}+mediatype%3Amovies)\n"
+      f"• [YouTube Full Movie Watch](https://www.youtube.com/results?search_query={encoded_title}+full+movie)\n\n"
+      "🌐 *अन्य वेबसाइट्स और लिंक्स:*\n"
+      f"• [Google Video / Web Watch](https://www.google.com/search?q={encoded_title}+watch+online+free)\n"
+      f"• [Open Culture Free Movies](https://www.openculture.com/freemoviesonline)\n"
+      f"• [Tubi TV Stream](https://tubitv.com/search/{simple_encoded})"
   )
 
-  # Archive.org से फाइल ढूंढना और भेजना
-  await process_archive_download(query.message, context, title)
-
-
-async def process_archive_download(message, context, title):
-  try:
-    encoded_title = requests.utils.quote(title)
-    ia_search_url = f"https://archive.org/advancedsearch.php?q=title%3A({encoded_title})+AND+mediatype%3A(movies)&output=json&rows=1"
-    ia_resp = requests.get(ia_search_url).json()
-    docs = ia_resp.get("response", {}).get("docs", [])
-
-    if not docs:
-      await send_free_links(message, title, "❌ डायरेक्ट फाइल नहीं मिली, फ्री लिंक्स:")
-      return
-
-    identifier = docs[0].get("identifier")
-    meta_url = f"https://archive.org/metadata/{identifier}"
-    meta_resp = requests.get(meta_url).json()
-    files = meta_resp.get("files", [])
-
-    mp4_file = None
-    for f in files:
-      if f.get("name", "").endswith(".mp4"):
-        mp4_file = f.get("name")
-        break
-
-    if not mp4_file:
-      await send_free_links(message, title, "❌ वीडियो फाइल उपलब्ध नहीं है, फ्री लिंक्स:")
-      return
-
-    download_url = f"https://archive.org/download/{identifier}/{mp4_file}"
-    await message.edit_text(f"📥 Downloading **{title}**...")
-
-    os.makedirs("downloads", exist_ok=True)
-    file_path = os.path.join("downloads", f"{title}.mp4")
-
-    dl_response = requests.get(download_url, stream=True)
-    if dl_response.status_code == 200:
-      with open(file_path, "wb") as f:
-        for chunk in dl_response.iter_content(chunk_size=1024 * 1024):
-          if chunk:
-            f.write(chunk)
-
-      await message.edit_text("📤 Uploading video to Telegram...")
-      with open(file_path, "rb") as video_file:
-        await context.bot.send_video(chat_id=message.chat_id, video=video_file)
-
-      os.remove(file_path)
-      await message.delete()
-    else:
-      await send_free_links(message, title, "⚠️ डाउनलोड विफल रहा, फ्री लिंक्स:")
-
-  except Exception as e:
-    logger.error(f"Download error: {e}")
-    await message.edit_text(f"⚠️ Error: {str(e)}")
-
-
-async def send_free_links(message, title, custom_message):
-  encoded_title = requests.utils.quote(title)
-  free_links_msg = (
-      f"{custom_message}\n\n"
-      f"🎬 *{title}*:\n\n"
-      f"• [Internet Archive Search](https://archive.org/search.php?query={encoded_title})\n"
-      f"• [YouTube (Free / Watch)](https://www.youtube.com/results?search_query={encoded_title}+full+movie)\n"
-      f"• [Tubi TV](https://tubitv.com)"
-  )
-  await message.edit_text(free_links_msg, parse_mode="Markdown")
+  await query.edit_message_text(links_msg, parse_mode="Markdown")
 
 
 def main():
