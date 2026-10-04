@@ -1,154 +1,202 @@
+import logging
+import os
+from threading import Thread
+from flask import Flask
 import requests
-import telebot
-from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
-TMDB_API_KEY = 'YOUR_TMDB_API_KEY'
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-bot = telebot.TeleBot(TOKEN)
+flask_app = Flask(__name__)
 
 
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-  welcome_text = (
-      '👋 नमस्ते! आपका स्वागत है।\n\n'
-      'किसी भी फिल्म की जानकारी के लिए टाइप करें:\n'
-      '`/movie फिल्म का नाम`\n\n'
-      'उदाहरण: `/movie Dhoom`'
+@flask_app.route("/")
+def home():
+  return "PrimeMovie Archive Bot is alive and running!"
+
+
+def run_flask():
+  port = int(os.environ.get("PORT", 8080))
+  flask_app.run(host="0.0.0.0", port=port)
+
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  user_name = update.effective_user.first_name
+  msg = (
+      f"Hey 👋 {user_name} 🍿\n\n"
+      "🍿 **Welcome To PrimeMovie Bot!**\n\n"
+      "Kisi bhi movie ka naam bhejein, bot Archive.org se direct download"
+      " karke bhejega! Agar file nahi mili, toh free streaming links mil"
+      " jayenge."
   )
-  bot.reply_to(message, welcome_text, parse_mode='Markdown')
+  await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-@bot.message_handler(commands=['movie'])
-def search_movie(message):
-  query_parts = message.text.split(maxsplit=1)
-  if len(query_parts) < 2:
-    bot.reply_to(
-        message,
-        'कृपया मूवी का नाम लिखें। उदाहरण: `/movie Dhoom`',
-        parse_mode='Markdown',
-    )
+async def incoming_message_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+  text = update.message.text.strip()
+  await search_and_download_media(update, context, text)
+
+
+async def search_and_download_media(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, query: str
+):
+  if not TMDB_API_KEY:
+    await update.message.reply_text("Error: TMDB API Key is missing.")
     return
 
-  movie_name = query_parts[1]
-  fetch_movies_list(message.chat.id, movie_name, 'en-US', message.message_id)
-
-
-def fetch_movies_list(chat_id, movie_name, lang, message_id=None):
-  url = f'https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={movie_name}&language={lang}'
-
-  try:
-    response = requests.get(url)
-    data = response.json()
-    results = data.get('results', [])
-
-    if not results:
-      bot.send_message(
-          chat_id, '❌ इस नाम से कोई मूवी नहीं मिली। कृपया दूसरा नाम ट्राय करें।'
-      )
-      return
-
-    response_text = f'🎬 *"{movie_name}" से जुड़ी फिल्में:*\n\n'
-
-    # टॉप 5 फिल्में दिखाना
-    for i, movie in enumerate(results[:5], 1):
-      title = movie.get('title', 'N/A')
-      release_date = movie.get('release_date', 'N/A')
-      year = release_date.split('-')[0] if release_date else 'N/A'
-      rating = movie.get('vote_average', 'N/A')
-      response_text += f'{i}. *{title}* ({year}) - ⭐ {rating}/10\n'
-
-    # भाषा बदलने के लिए बटन (मैसेज के साथ मूवी का नाम और भाषा स्टोर की गई है)
-    markup = InlineKeyboardMarkup()
-    markup.row(
-        InlineKeyboardButton(
-            '🇬🇧 English', callback_data=f'lang_en_{movie_name}'
-        ),
-        InlineKeyboardButton('🇮🇳 हिंदी', callback_data=f'lang_hi_{movie_name}'),
-    )
-
-    response_text += '\n👇 *भाषा बदलें:*'
-
-    if message_id:
-      bot.send_message(
-          chat_id, response_text, parse_mode='Markdown', reply_markup=markup
-      )
-    else:
-      bot.send_message(
-          chat_id, response_text, parse_mode='Markdown', reply_markup=markup
-      )
-
-  except Exception as e:
-    bot.send_message(
-        chat_id, '⚠️ कुछ तकनीकी समस्या आ गई है। कृपया थोड़ी देर बाद कोशिश करें।'
-    )
-
-
-# जब यूजर भाषा का बटन दबाएगा
-@bot.callback_query_handler(func=lambda call: call.data.startswith('lang_'))
-def language_callback(call):
-  data_parts = call.data.split('_', 2)
-  lang_code = data_parts[1]  # en या hi
-  movie_name = data_parts[2]  # मूवी का नाम
-
-  # भाषा कोड को TMDB के फॉर्मेट में बदलना
-  tmdb_lang = 'hi-IN' if lang_code == 'hi' else 'en-US'
-
-  bot.answer_callback_query(
-      call.id,
-      f'भाषा बदली जा रही है: {"हिंदी" if lang_code=="hi" else "English"}',
+  status_msg = await update.message.reply_text(
+      "🔍 *Searching movie details...*", parse_mode="Markdown"
   )
 
-  # चुनी गई भाषा में दोबारा डेटा मंगाना
-  url = f'https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={movie_name}&language={tmdb_lang}'
+  # TMDB se movie ka sahi naam pata karna
+  tmdb_url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={requests.utils.quote(query)}"
 
   try:
-    response = requests.get(url)
-    data = response.json()
-    results = data.get('results', [])
+    response = requests.get(tmdb_url).json()
+    results = response.get("results", [])
+    filtered = [r for r in results if r.get("media_type") in ["movie", "tv"]]
 
-    if not results:
-      bot.send_message(call.message.chat.id, '❌ इस भाषा में डेटा नहीं मिला।')
+    if not filtered:
+      title = query
+    else:
+      item = filtered[0]
+      title = item.get("title") or item.get("name")
+
+    await status_msg.edit_text(f"📥 Searching **{title}** on Archive.org...")
+
+    encoded_title = requests.utils.quote(title)
+
+    # Archive.org Search API
+    ia_search_url = f"https://archive.org/advancedsearch.php?q=title%3A({encoded_title})+AND+mediatype%3A(movies)&output=json&rows=1"
+    ia_resp = requests.get(ia_search_url).json()
+    docs = ia_resp.get("response", {}).get("docs", [])
+
+    # अगर Archive.org पर फाइल नहीं मिलती, तो फ्री लिंक्स भेजें
+    if not docs:
+      await send_free_links(
+          status_msg,
+          title,
+          "❌ डायरेक्ट वीडियो फाइल नहीं मिली, लेकिन आप यहाँ फ्री में देख सकते हैं:",
+      )
       return
 
-    movie = results[0]  # पहली फिल्म की डिटेल
-    title = movie.get('title', 'N/A')
-    release_date = movie.get('release_date', 'N/A')
-    rating = movie.get('vote_average', 'N/A')
-    overview = movie.get('overview', 'विवरण उपलब्ध नहीं है।')
-    poster_path = movie.get('poster_path')
+    identifier = docs[0].get("identifier")
 
-    poster_url = (
-        f'https://image.tmdb.org/t/p/w500{poster_path}'
-        if poster_path
-        else None
-    )
+    # Metadata se direct file (.mp4) ka link nikalna
+    meta_url = f"https://archive.org/metadata/{identifier}"
+    meta_resp = requests.get(meta_url).json()
+    files = meta_resp.get("files", [])
 
-    reply_text = (
-        f'🎬 *{title}* ({release_date})\n'
-        f'⭐ *Rating:* {rating}/10\n\n'
-        f'📝 *Story:* {overview}\n\n'
-        '🔗 *फ्री और लीगल देखने के प्लेटफॉर्म्स:*\n'
-        '• [Internet Archive](https://archive.org/details/feature_films)\n'
-        '• [Open Culture](https://www.openculture.com/freemoviesonline)\n'
-        '• [Tubi TV](https://tubitv.com)'
-    )
+    mp4_file = None
+    for f in files:
+      if (
+          f.get("format") in ["MPEG4", "h.264", "5X MP4"]
+          or f.get("name", "").endswith(".mp4")
+      ):
+        mp4_file = f.get("name")
+        break
 
-    if poster_url:
-      bot.send_photo(
-          call.message.chat.id,
-          poster_url,
-          caption=reply_text,
-          parse_mode='Markdown',
+    if not mp4_file and files:
+      for f in files:
+        if f.get("name", "").endswith(".mp4"):
+          mp4_file = f.get("name")
+          break
+
+    # अगर .mp4 फाइल नहीं मिलती, तो फ्री लिंक्स भेजें
+    if not mp4_file:
+      await send_free_links(
+          status_msg,
+          title,
+          "❌ इस मूवी की वीडियो फाइल उपलब्ध नहीं है, आप इन फ्री लिंक्स का"
+          " इस्तेमाल करें:",
       )
+      return
+
+    download_url = f"https://archive.org/download/{identifier}/{mp4_file}"
+
+    await status_msg.edit_text(
+        f"📥 Downloading **{title}** (Streaming Mode)..."
+    )
+
+    os.makedirs("downloads", exist_ok=True)
+    file_path = os.path.join("downloads", f"{title}.mp4")
+
+    # Requests streaming download (1MB chunks)
+    dl_response = requests.get(download_url, stream=True)
+    if dl_response.status_code == 200:
+      with open(file_path, "wb") as f:
+        for chunk in dl_response.iter_content(chunk_size=1024 * 1024):
+          if chunk:
+            f.write(chunk)
+
+      await status_msg.edit_text("📤 Uploading video to Telegram...")
+      with open(file_path, "rb") as video_file:
+        await context.bot.send_video(
+            chat_id=update.effective_chat.id, video=video_file
+        )
+
+      os.remove(file_path)
+      await status_msg.delete()
     else:
-      bot.send_message(
-          call.message.chat.id, reply_text, parse_mode='Markdown'
+      # अगर डाउनलोड फेल हो जाए, तो फ्री लिंक्स भेजें
+      await send_free_links(
+          status_msg,
+          title,
+          "⚠️ डाउनलोड विफल रहा। कृपया इन फ्री लीगल लिंक्स से देखें:",
       )
 
   except Exception as e:
-    bot.send_message(call.message.chat.id, '⚠️ डेटा लोड करने में समस्या आई।')
+    logger.error(f"Processing error: {e}")
+    await status_msg.edit_text(f"⚠️ Error: {str(e)}")
 
 
-print('Bot is running...')
-bot.infinity_polling()
+async def send_free_links(status_msg, title, custom_message):
+  encoded_title = requests.utils.quote(title)
+  free_links_msg = (
+      f"{custom_message}\n\n"
+      f"🎬 *{title}* के लिए फ्री विकल्प:\n\n"
+      f"• [Internet Archive Search](https://archive.org/search.php?query={encoded_title})\n"
+      f"• [YouTube (Free / Watch)](https://www.youtube.com/results?search_query={encoded_title}+full+movie)\n"
+      f"• [Open Culture Free Movies](https://www.openculture.com/freemoviesonline)\n"
+      f"• [Tubi TV](https://tubitv.com)"
+  )
+  await status_msg.edit_text(free_links_msg, parse_mode="Markdown")
+
+
+def main():
+  if not TELEGRAM_TOKEN:
+    logger.error("Telegram Token is missing!")
+    return
+
+  flask_thread = Thread(target=run_flask)
+  flask_thread.daemon = True
+  flask_thread.start()
+
+  app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+  app.add_handler(CommandHandler("start", start))
+  app.add_handler(
+      MessageHandler(filters.TEXT & ~filters.COMMAND, incoming_message_handler)
+  )
+
+  app.run_polling()
+
+
+if __name__ == "__main__":
+  main()
