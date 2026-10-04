@@ -40,7 +40,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   msg = (
       f"Hey 👋 {user_name} 🍿\n\n"
       "🍿 **Welcome To PrimeMovie Bot!**\n\n"
-      "किसी भी मूवी का नाम भेजें, मैं उससे जुड़ी सभी फिल्मों की लिस्ट दिखाऊंगा!"
+      "Kisi bhi movie ka naam bhejein, main usse judi saari movies ki list"
+      " dikhaunga!"
   )
   await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -71,13 +72,12 @@ async def incoming_message_handler(
 
     if not filtered:
       await status_msg.edit_text(
-          f"❌ माफ कीजिए, '{query}' से जुड़ी कोई मूवी नहीं मिली।"
+          f"❌ Maaf kijiye, '{query}' se judi koi movie nahi mili."
       )
       return
 
-    # सभी मिलती-जुलती फिल्मों के बटन तैयार करना
     keyboard = []
-    for item in filtered[:6]:  # टॉप 6 परिणाम
+    for item in filtered[:6]:
       title = item.get("title") or item.get("name")
       year = (
           item.get("release_date", "")[:4]
@@ -94,7 +94,8 @@ async def incoming_message_handler(
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await status_msg.edit_text(
-        f"✨ *'{query}'* से जुड़ी ये फिल्में मिली हैं, सही वाली पर क्लिक करें:",
+        f"✨ *'{query}'* se judi yeh movies mili hain, sahi wali par click"
+        " karein:",
         parse_mode="Markdown",
         reply_markup=reply_markup,
     )
@@ -122,21 +123,17 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
       or detail_resp.get("first_air_date", "")[:4]
       or ""
   )
-  if year:
-    full_title_query = f"{title} {year}"
-  else:
-    full_title_query = title
-
+  
+  full_title_query = f"{title} {year}" if year else title
   encoded_title = requests.utils.quote(full_title_query)
   simple_encoded = requests.utils.quote(title)
 
-  # आपके निर्देशानुसार: सबसे ऊपर डाउनलोड और स्ट्रीम करने के विकल्प, फिर अन्य वेबसाइट्स के लिंक्स
   links_msg = (
       f"🎬 *{title}* ({year})\n\n"
-      "📥 *सबसे पहले देखें और डाउनलोड करें (Direct Stream & Download):*\n"
+      "📥 *Sabse Pehle Dekhein aur Download Karein (Direct Stream & Download):*\n"
       f"• [Archive.org Direct Download & Stream](https://archive.org/search.php?query={encoded_title}+mediatype%3Amovies)\n"
       f"• [YouTube Full Movie Watch](https://www.youtube.com/results?search_query={encoded_title}+full+movie)\n\n"
-      "🌐 *अन्य वेबसाइट्स और लिंक्स:*\n"
+      "🌐 *Anye Websites aur Links:*\n"
       f"• [Google Video / Web Watch](https://www.google.com/search?q={encoded_title}+watch+online+free)\n"
       f"• [Open Culture Free Movies](https://www.openculture.com/freemoviesonline)\n"
       f"• [Tubi TV Stream](https://tubitv.com/search/{simple_encoded})"
